@@ -105,9 +105,9 @@ def sensor_loop():
             if not (t_ing == float("inf") and t_sal == float("inf")):
                 with state_lock:
                     if t_ing <= t_sal:
-                        state["entry_counter"] += 1
-                    else:
                         state["exit_counter"] += 1
+                    else:
+                        state["entry_counter"] += 1
 
                 last_event_time = current_time
                 event_counted   = True
