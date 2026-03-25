@@ -30,8 +30,8 @@ except Exception:
     SIMULATION = True  # modo demo en PC
 
 
-INGRESO_SIDE = {"S1"}
-SALIDA_SIDE  = {"S2", "S3", "S4"}
+SALIDA_SIDE = {"S1"}
+INGRESO_SIDE  = {"S2", "S3", "S4"}
 
 first_activation: dict[str, float] = {}
 event_counted   = False
