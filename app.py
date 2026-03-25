@@ -30,8 +30,8 @@ except Exception:
     SIMULATION = True  # modo demo en PC
 
 
-SALIDA_SIDE = {"S1"}
-INGRESO_SIDE  = {"S2", "S3", "S4"}
+SALIDA_SIDE = {"S2", "S3", "S4"}
+INGRESO_SIDE  = {"S1"}
 
 first_activation: dict[str, float] = {}
 event_counted   = False
@@ -105,9 +105,9 @@ def sensor_loop():
             if not (t_ing == float("inf") and t_sal == float("inf")):
                 with state_lock:
                     if t_ing <= t_sal:
-                        state["exit_counter"] += 1
-                    else:
                         state["entry_counter"] += 1
+                    else:
+                        state["exit_counter"] += 1
 
                 last_event_time = current_time
                 event_counted   = True
