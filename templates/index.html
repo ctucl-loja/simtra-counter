@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simtra — Monitor de Acceso</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&family=Barlow+Condensed:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+
+  {% if simulation %}
+  <div class="sim-banner">
+    <span class="sim-dot"></span> MODO SIMULACIÓN — Sin hardware GPIO detectado
+  </div>
+  {% endif %}
+
+  <!-- ── Header ── -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo-mark">
+        <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="8" width="6" height="20" rx="1" fill="var(--accent)"/>
+          <rect x="11" y="4" width="6" height="28" rx="1" fill="var(--accent)" opacity=".7"/>
+          <rect x="20" y="12" width="6" height="16" rx="1" fill="var(--accent)" opacity=".5"/>
+          <rect x="29" y="16" width="5" height="12" rx="1" fill="var(--accent)" opacity=".3"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand">SIMTRA</h1>
+        <p class="brand-sub">Sistema de Monitoreo de Tránsito · CTUCL</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="clock-box">
+        <span class="clock-label">HORA LOCAL</span>
+        <span class="clock" id="clock">--:--:--</span>
+      </div>
+      <div class="status-pill" id="conn-pill">
+        <span class="pulse-dot"></span> EN LÍNEA
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main ── -->
+  <main class="main">
+
+    <!-- Contadores grandes -->
+    <section class="counters">
+      <div class="counter-card entry">
+        <div class="counter-icon">
+          <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="24" cy="24" r="22" stroke="currentColor" stroke-width="2" opacity=".2"/>
+            <path d="M24 10 L24 36" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M14 26 L24 36 L34 26" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 14 L24 10 L32 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".5"/>
+            <!-- person silhouette -->
+            <circle cx="24" cy="19" r="3" fill="currentColor"/>
+            <path d="M18 34 Q18 28 24 28 Q30 28 30 34" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="counter-info">
+          <span class="counter-label">INGRESOS</span>
+          <span class="counter-num" id="entry-count">{{ state.entry_counter }}</span>
+          <span class="counter-unit">personas</span>
+        </div>
+        <div class="counter-trend entry-trend">↑</div>
+      </div>
+
+      <div class="divider-line"></div>
+
+      <div class="counter-card exit">
+        <div class="counter-icon">
+          <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="24" cy="24" r="22" stroke="currentColor" stroke-width="2" opacity=".2"/>
+            <path d="M24 10 L24 36" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M14 20 L24 10 L34 20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 38 L24 34 L32 38" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".5"/>
+            <circle cx="24" cy="27" r="3" fill="currentColor"/>
+            <path d="M18 42 Q18 36 24 36 Q30 36 30 42" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="counter-info">
+          <span class="counter-label">SALIDAS</span>
+          <span class="counter-num" id="exit-count">{{ state.exit_counter }}</span>
+          <span class="counter-unit">personas</span>
+        </div>
+        <div class="counter-trend exit-trend">↓</div>
+      </div>
+
+      <div class="net-box">
+        <span class="net-label">AFORO NETO</span>
+        <span class="net-num" id="net-count">{{ state.entry_counter - state.exit_counter }}</span>
+        <button class="reset-btn" id="reset-btn" title="Reiniciar contadores">
+          <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+            <path d="M4 10a6 6 0 1 0 1.6-4.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M4 5.5V10H8.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          RESET
+        </button>
+      </div>
+    </section>
+
+    <!-- Panel de sensores -->
+    <section class="sensors-section">
+      <div class="section-header">
+        <span class="section-label">BARRA DE CONTEO — ESTADO DE SENSORES</span>
+        <span class="update-tag" id="update-tag">actualizando…</span>
+      </div>
+
+      <!-- Diagrama + barras -->
+      <div class="sensors-layout">
+
+        <!-- Diagrama esquemático -->
+        <div class="diagram-box">
+          <div class="diagram-title">VISTA LATERAL</div>
+          <svg class="diagram-svg" viewBox="0 0 160 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- marco barra -->
+            <rect x="55" y="10" width="70" height="300" rx="6" stroke="var(--border)" stroke-width="1.5" fill="var(--surface2)" opacity=".6"/>
+            <!-- slots sensores -->
+            <!-- S4 top -->
+            <rect x="62" y="30"  width="46" height="50" rx="4" fill="var(--surface3)" stroke="var(--border)" stroke-width="1" id="d-S4"/>
+            <text x="85" y="59" text-anchor="middle" font-family="Share Tech Mono" font-size="11" fill="var(--text-dim)">S4</text>
+            <!-- S3 -->
+            <rect x="62" y="100" width="46" height="50" rx="4" fill="var(--surface3)" stroke="var(--border)" stroke-width="1" id="d-S3"/>
+            <text x="85" y="129" text-anchor="middle" font-family="Share Tech Mono" font-size="11" fill="var(--text-dim)">S3</text>
+            <!-- S2 -->
+            <rect x="62" y="170" width="46" height="50" rx="4" fill="var(--surface3)" stroke="var(--border)" stroke-width="1" id="d-S2"/>
+            <text x="85" y="199" text-anchor="middle" font-family="Share Tech Mono" font-size="11" fill="var(--text-dim)">S2</text>
+            <!-- S1 bottom — offset (zigzag: lado INGRESO) -->
+            <rect x="42" y="240" width="46" height="50" rx="4" fill="var(--surface3)" stroke="var(--border-accent)" stroke-width="1.5" id="d-S1"/>
+            <text x="65" y="269" text-anchor="middle" font-family="Share Tech Mono" font-size="11" fill="var(--accent-dim)">S1</text>
+
+            <!-- flechas dirección -->
+            <text x="130" y="268" font-family="Barlow Condensed" font-size="9" fill="var(--accent)" letter-spacing="1">ING</text>
+            <path d="M128 263 L115 263" stroke="var(--accent)" stroke-width="1" marker-end="url(#arr)"/>
+            <text x="5"  y="199" font-family="Barlow Condensed" font-size="9" fill="var(--exit-color)" letter-spacing="1">SAL</text>
+            <path d="M32 194 L45 194" stroke="var(--exit-color)" stroke-width="1" marker-end="url(#arr2)"/>
+
+            <defs>
+              <marker id="arr"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0 0 L6 3 L0 6 Z" fill="var(--accent)"/>
+              </marker>
+              <marker id="arr2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0 0 L6 3 L0 6 Z" fill="var(--exit-color)"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+
+        <!-- Barras de sensor -->
+        <div class="sensors-bars" id="sensors-bars">
+          {% set labels = {"S1": ("PIE","INGRESO"), "S2": ("RODILLA","SALIDA"), "S3": ("CADERA","SALIDA"), "S4": ("TORSO","SALIDA")} %}
+          {% for name in ["S4","S3","S2","S1"] %}
+          {% set active = state.sensors[name] %}
+          {% set lbl, side = labels[name] %}
+          <div class="sensor-bar {% if active %}active{% endif %} {% if side == 'INGRESO' %}side-in{% else %}side-out{% endif %}"
+               data-sensor="{{ name }}" data-side="{{ side }}">
+            <div class="sensor-id">{{ name }}</div>
+            <div class="sensor-body">
+              <div class="sensor-fill"></div>
+              <div class="sensor-beam"></div>
+            </div>
+            <div class="sensor-meta">
+              <span class="sensor-pos">{{ lbl }}</span>
+              <span class="sensor-side-tag">{{ side }}</span>
+            </div>
+            <div class="sensor-status-dot"></div>
+          </div>
+          {% endfor %}
+        </div>
+
+      </div><!-- /sensors-layout -->
+    </section>
+
+  </main>
+
+  <!-- ── Footer ── -->
+  <footer class="footer">
+    <span>CONSORCIO LOJA · CTUCL</span>
+    <span class="footer-sep">|</span>
+    <span>Barra de conteo v2.1</span>
+    <span class="footer-sep">|</span>
+    <span id="poll-info">Poll: 500ms</span>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
