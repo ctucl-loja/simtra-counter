@@ -17,7 +17,7 @@ SENSORS_HW = {
 }
 
 BUZZER = Buzzer(26)          # activo en HIGH
-BUZZER_DURATION = 1.0        # segundos
+BUZZER_DURATION = 2.0        # segundos
 
 SALIDA_SIDE = {"S2"}
 INGRESO_SIDE = {"S1", "S3", "S4"}
