@@ -22,7 +22,7 @@ BUZZER = Buzzer(26)
 SALIDA_SIDE = {"S2"}
 INGRESO_SIDE = {"S1", "S3", "S4"}
 
-ENTRY_BEEP_DURATION = 0.2        # pitido al confirmar ingreso
+EVENT_BEEP_DURATION  = 0.2        # pitido al confirmar ingreso
 TIME_COOLDOWN = 0.2              # entre eventos de cruce
 
 LINGER_THRESHOLD = 1.5           # segundos antes de iniciar alarma
@@ -110,11 +110,11 @@ def sensor_loop():
                 if t_ing <= t_sal:
                     state["entry_counter"] += 1
                     evento = "INGRESO"
-                    trigger_buzzer(current_time, ENTRY_BEEP_DURATION)
                 else:
                     state["exit_counter"] += 1
                     evento = "SALIDA"
 
+                trigger_buzzer(current_time, EVENT_BEEP_DURATION)
                 last_event_time = current_time
                 event_counted = True
 
