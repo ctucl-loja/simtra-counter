@@ -129,3 +129,5 @@ Los sensores se configuran con `pull_up=True`. Se cuenta un **ingreso** cuando S
   "exit_counter": 8
 }
 ```
+
+![Diagrama GPIO](docs/gpio-diagram.png)
