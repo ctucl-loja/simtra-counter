@@ -69,7 +69,7 @@ function applyState(data) {
     const rect = diagramRects[name];
     if (!rect) return;
     const colors = active
-      ? (name === "S1" ? COLORS_IN : COLORS_OUT)
+      ? (name === "S2" ? COLORS_IN : COLORS_OUT)
       : COLORS_OFF;
     rect.style.fill   = colors.fill;
     rect.style.stroke = colors.stroke;
