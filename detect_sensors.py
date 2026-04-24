@@ -2,7 +2,7 @@ from time import sleep, time
 from gpiozero import Button
 
 # Pines candidatos (los mismos del contador, sin asumir cuál es cuál)
-CANDIDATE_PINS = [12, 16, 20, 26]
+CANDIDATE_PINS = [21, 20, 16, 12]
 
 buttons = {pin: Button(pin, pull_up=True) for pin in CANDIDATE_PINS}
 
