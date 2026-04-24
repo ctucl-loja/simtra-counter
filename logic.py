@@ -27,7 +27,7 @@ first_activation: dict[str, float] = {}
 event_counted = False
 last_event_time = 0.0
 buzzer_off_at = 0.0
-TIME_COOLDOWN = 2.0
+TIME_COOLDOWN = 0.2
 
 
 def trigger_buzzer(now: float) -> None:
