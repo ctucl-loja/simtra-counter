@@ -16,24 +16,32 @@ SENSORS_HW = {
     "S4": Button(12, pull_up=True),
 }
 
-BUZZER = Buzzer(26)          # activo en HIGH
-BUZZER_DURATION = 2.0        # segundos
+BUZZER = Buzzer(26)
 
+# ── Config ────────────────────────────────────────────────────────────────────
 SALIDA_SIDE = {"S2"}
 INGRESO_SIDE = {"S1", "S3", "S4"}
+
+ENTRY_BEEP_DURATION = 0.2        # pitido al confirmar ingreso
+TIME_COOLDOWN = 0.2              # entre eventos de cruce
+
+LINGER_THRESHOLD = 1.5           # segundos antes de iniciar alarma
+LINGER_BEEP_DURATION = 0.1       # duración de cada pitido de alarma
+LINGER_BEEP_PERIOD = 0.4         # periodo entre pitidos de alarma
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 first_activation: dict[str, float] = {}
 event_counted = False
 last_event_time = 0.0
 buzzer_off_at = 0.0
-TIME_COOLDOWN = 0.2
+any_active_since: float | None = None
+last_linger_beep = 0.0
 
 
-def trigger_buzzer(now: float) -> None:
+def trigger_buzzer(now: float, duration: float) -> None:
     global buzzer_off_at
     BUZZER.on()
-    buzzer_off_at = now + BUZZER_DURATION
+    buzzer_off_at = now + duration
 
 
 def update_buzzer(now: float) -> None:
@@ -43,8 +51,13 @@ def update_buzzer(now: float) -> None:
         buzzer_off_at = 0.0
 
 
+def buzzer_is_active() -> bool:
+    return buzzer_off_at != 0.0
+
+
 def sensor_loop():
     global event_counted, last_event_time
+    global any_active_since, last_linger_beep
 
     while True:
         current_time = time()
@@ -57,12 +70,26 @@ def sensor_loop():
             if active and name not in first_activation:
                 first_activation[name] = current_time
 
+        # Marca el inicio de actividad sostenida
+        if active_count > 0 and any_active_since is None:
+            any_active_since = current_time
+
         if active_count == 0:
             first_activation.clear()
             event_counted = False
+            any_active_since = None
+            last_linger_beep = 0.0
             state["sensors"] = raw
             sleep(0.05)
             continue
+
+        # Alarma de permanencia: alguien se quedó en las barreras
+        if (any_active_since is not None
+                and current_time - any_active_since >= LINGER_THRESHOLD
+                and current_time - last_linger_beep >= LINGER_BEEP_PERIOD
+                and not buzzer_is_active()):
+            trigger_buzzer(current_time, LINGER_BEEP_DURATION)
+            last_linger_beep = current_time
 
         if current_time - last_event_time < TIME_COOLDOWN:
             state["sensors"] = raw
@@ -83,7 +110,7 @@ def sensor_loop():
                 if t_ing <= t_sal:
                     state["entry_counter"] += 1
                     evento = "INGRESO"
-                    trigger_buzzer(current_time)
+                    trigger_buzzer(current_time, ENTRY_BEEP_DURATION)
                 else:
                     state["exit_counter"] += 1
                     evento = "SALIDA"
@@ -97,10 +124,22 @@ def sensor_loop():
         sleep(0.05)
 
 
+def shutdown():
+    """Apaga el buzzer y libera los GPIO."""
+    BUZZER.off()
+    BUZZER.close()
+    for btn in SENSORS_HW.values():
+        btn.close()
+
+
 if __name__ == "__main__":
+    print("Sensor loop iniciado. Ctrl+C para salir.\n")
     try:
         sensor_loop()
     except KeyboardInterrupt:
-        print(f"\nFinal -> Ingresos: {state['entry_counter']} | Salidas: {state['exit_counter']}")
+        print("\n\nInterrumpido por el usuario.")
+    except Exception as e:
+        print(f"\n\nError inesperado: {e}")
     finally:
-        BUZZER.off()
+        shutdown()
+        print(f"Final -> Ingresos: {state['entry_counter']} | Salidas: {state['exit_counter']}")
