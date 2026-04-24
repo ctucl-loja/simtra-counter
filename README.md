@@ -8,7 +8,7 @@ Aplicación web para el conteo de pasajeros mediante sensores GPIO en una Raspbe
 
 - Raspberry Pi (cualquier modelo con GPIO)
 - Python 3.9+
-- 4 sensores conectados a los pines GPIO: **21 (S1)**, **20 (S2)**, **16 (S3)**, **12 (S4)**
+- 4 sensores conectados a los pines GPIO: **26 (S1)**, **16 (S2)**, **20 (S3)**, **12 (S4)**
 - Acceso SSH o consola como usuario `admin`
 
 ---
@@ -103,10 +103,10 @@ La aplicación queda disponible en `http://<ip-raspberry>:4000`.
 
 | Sensor | Pin GPIO (BCM) | Función |
 |---|---|---|
+| S1 | 26 | Ingreso |
+| S2 | 16 | Salida |
+| S3 | 20 | Ingreso |
 | S4 | 12 | Ingreso |
-| S3 | 16 | Ingreso |
-| S2 | 20 | Salida |
-| S1 | 21 | Ingreso |
 
 Los sensores se configuran con `pull_up=True`. Se cuenta un **ingreso** cuando S1 se activa antes que S2, y una **salida** cuando S2 se activa primero. El evento requiere al menos 3 sensores activos simultáneamente.
 
@@ -129,5 +129,3 @@ Los sensores se configuran con `pull_up=True`. Se cuenta un **ingreso** cuando S
   "exit_counter": 8
 }
 ```
-
-![Diagrama GPIO](docs/gpio-diagram.png)
