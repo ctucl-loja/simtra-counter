@@ -19,9 +19,9 @@ try:
     from gpiozero import Button
 
     SENSORS_HW = {
-        "S1": Button(26, pull_up=True),
-        "S2": Button(16, pull_up=True),
-        "S3": Button(20, pull_up=True),
+        "S1": Button(21, pull_up=True),
+        "S2": Button(20, pull_up=True),
+        "S3": Button(16, pull_up=True),
         "S4": Button(12, pull_up=True),
     }
     SIMULATION = False
