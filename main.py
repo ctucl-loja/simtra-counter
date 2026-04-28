@@ -1,4 +1,7 @@
+import threading
 from time import sleep, time
+
+import requests
 from gpiozero import Button, Buzzer
 
 # ── Estado ────────────────────────────────────────────────────────────────────
@@ -22,12 +25,18 @@ BUZZER = Buzzer(26)
 SALIDA_SIDE = {"S2"}
 INGRESO_SIDE = {"S1", "S3", "S4"}
 
-EVENT_BEEP_DURATION  = 0.2        # pitido al confirmar ingreso
+EVENT_BEEP_DURATION = 0.2        # pitido al confirmar ingreso
 TIME_COOLDOWN = 0.2              # entre eventos de cruce
 
 LINGER_THRESHOLD = 1.5           # segundos antes de iniciar alarma
 LINGER_BEEP_DURATION = 0.1       # duración de cada pitido de alarma
 LINGER_BEEP_PERIOD = 0.4         # periodo entre pitidos de alarma
+
+API_URL = "http://localhost:8000/api/passenger"
+HTTP_TIMEOUT = 3.0
+
+DIRECTION_ENTRY = 0
+DIRECTION_EXIT = 1
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 first_activation: dict[str, float] = {}
@@ -38,6 +47,7 @@ any_active_since: float | None = None
 last_linger_beep = 0.0
 
 
+# ── Buzzer ────────────────────────────────────────────────────────────────────
 def trigger_buzzer(now: float, duration: float) -> None:
     global buzzer_off_at
     BUZZER.on()
@@ -55,6 +65,23 @@ def buzzer_is_active() -> bool:
     return buzzer_off_at != 0.0
 
 
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+def send_passenger_event(direction: int) -> None:
+    """Envía el evento al backend en un thread aparte para no bloquear el loop."""
+    def _post():
+        try:
+            requests.post(
+                API_URL,
+                json={"direction": direction},
+                timeout=HTTP_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            print(f"[HTTP ERROR] {e}")
+
+    threading.Thread(target=_post, daemon=True).start()
+
+
+# ── Sensor loop ───────────────────────────────────────────────────────────────
 def sensor_loop():
     global event_counted, last_event_time
     global any_active_since, last_linger_beep
@@ -110,9 +137,11 @@ def sensor_loop():
                 if t_ing <= t_sal:
                     state["entry_counter"] += 1
                     evento = "INGRESO"
+                    send_passenger_event(DIRECTION_ENTRY)
                 else:
                     state["exit_counter"] += 1
                     evento = "SALIDA"
+                    send_passenger_event(DIRECTION_EXIT)
 
                 trigger_buzzer(current_time, EVENT_BEEP_DURATION)
                 last_event_time = current_time
@@ -124,6 +153,7 @@ def sensor_loop():
         sleep(0.05)
 
 
+# ── Shutdown ──────────────────────────────────────────────────────────────────
 def shutdown():
     """Apaga el buzzer y libera los GPIO."""
     BUZZER.off()
