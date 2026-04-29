@@ -35,8 +35,8 @@ LINGER_BEEP_PERIOD = 0.4         # periodo entre pitidos de alarma
 API_URL = "http://localhost:8000/api/passenger"
 HTTP_TIMEOUT = 3.0
 
-DIRECTION_ENTRY = 0
-DIRECTION_EXIT = 1
+DIRECTION_ENTRY = 'ENTRY'
+DIRECTION_EXIT = 'EXIT'
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 first_activation: dict[str, float] = {}
@@ -66,13 +66,13 @@ def buzzer_is_active() -> bool:
 
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────
-def send_passenger_event(direction: int) -> None:
+def send_passenger_event(direction: str) -> None:
     """Envía el evento al backend en un thread aparte para no bloquear el loop."""
     def _post():
         try:
             requests.post(
                 API_URL,
-                json={"direction": direction},
+                json={"direction": direction,"door":"FRONT"},
                 timeout=HTTP_TIMEOUT,
             )
         except requests.RequestException as e:
