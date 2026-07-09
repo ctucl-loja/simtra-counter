@@ -115,20 +115,21 @@ def sensor_loop():
             if active and name not in first_activation:
                 first_activation[name] = current_time
 
-        # Marca el inicio de actividad sostenida
-        if active_count > 0 and any_active_since is None:
+        # Marca el inicio de actividad sostenida con más de 2 sensores obstruidos a la vez
+        if active_count > 2 and any_active_since is None:
             any_active_since = current_time
+        elif active_count <= 2:
+            any_active_since = None
+            last_linger_beep = 0.0
 
         if active_count == 0:
             first_activation.clear()
             event_counted = False
-            any_active_since = None
-            last_linger_beep = 0.0
             state["sensors"] = raw
             sleep(0.05)
             continue
 
-        # Alarma de permanencia: alguien/algo obstruye las barreras
+        # Alarma de permanencia: más de 2 sensores obstruidos a la vez
         if (any_active_since is not None
                 and current_time - any_active_since >= LINGER_THRESHOLD
                 and current_time - last_linger_beep >= LINGER_BEEP_PERIOD
