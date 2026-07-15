@@ -46,6 +46,24 @@ buzzer_off_at = 0.0
 any_active_since: float | None = None
 last_linger_beep = 0.0
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+_log_counter = 0
+_log_lock = threading.Lock()
+
+
+def log(message: str) -> None:
+    """Log enumerado (para eventos normales: ingresos, salidas, HTTP, sistema, etc.)."""
+    global _log_counter
+    with _log_lock:
+        _log_counter += 1
+        n = _log_counter
+    print(f"[{n}] {message}")
+
+
+def log_alarm(message: str) -> None:
+    """Log de alarma (sensores obstruidos). Nunca se enumera."""
+    print(f"[ALARMA] {message}")
+
 
 # ── Buzzer ────────────────────────────────────────────────────────────────────
 def trigger_buzzer(now: float, duration: float) -> None:
@@ -72,11 +90,11 @@ def send_passenger_event(direction: str) -> None:
         try:
             requests.post(
                 API_URL,
-                json={"direction": direction,"door":"FRONT"},
+                json={"direction": direction, "door": "FRONT"},
                 timeout=HTTP_TIMEOUT,
             )
         except requests.RequestException as e:
-            print(f"[HTTP ERROR] {e}")
+            log(f"[HTTP ERROR] {e}")
 
     threading.Thread(target=_post, daemon=True).start()
 
@@ -97,26 +115,34 @@ def sensor_loop():
             if active and name not in first_activation:
                 first_activation[name] = current_time
 
-        # Marca el inicio de actividad sostenida
-        if active_count > 0 and any_active_since is None:
+        # Marca el inicio de actividad sostenida con más de 2 sensores obstruidos a la vez
+        if active_count > 2 and any_active_since is None:
             any_active_since = current_time
+        elif active_count <= 2:
+            any_active_since = None
+            last_linger_beep = 0.0
 
         if active_count == 0:
             first_activation.clear()
             event_counted = False
-            any_active_since = None
-            last_linger_beep = 0.0
             state["sensors"] = raw
             sleep(0.05)
             continue
 
-        # Alarma de permanencia: alguien se quedó en las barreras
+        # Alarma de permanencia: más de 2 sensores obstruidos a la vez
         if (any_active_since is not None
                 and current_time - any_active_since >= LINGER_THRESHOLD
                 and current_time - last_linger_beep >= LINGER_BEEP_PERIOD
                 and not buzzer_is_active()):
             trigger_buzzer(current_time, LINGER_BEEP_DURATION)
             last_linger_beep = current_time
+
+            sensores_activos = [s for s, active in raw.items() if active]
+            tiempo_obstruido = current_time - any_active_since
+            log_alarm(
+                f"Sensores obstruidos: {', '.join(sensores_activos)} "
+                f"(bloqueados por {tiempo_obstruido:.1f}s)"
+            )
 
         if current_time - last_event_time < TIME_COOLDOWN:
             state["sensors"] = raw
@@ -147,7 +173,7 @@ def sensor_loop():
                 last_event_time = current_time
                 event_counted = True
 
-                print(f"[{evento}] Ingresos: {state['entry_counter']} | Salidas: {state['exit_counter']}")
+                log(f"[{evento}] Ingresos: {state['entry_counter']} | Salidas: {state['exit_counter']}")
 
         state["sensors"] = raw
         sleep(0.05)
@@ -163,13 +189,13 @@ def shutdown():
 
 
 if __name__ == "__main__":
-    print("Sensor loop iniciado. Ctrl+C para salir.\n")
+    log("Sensor loop iniciado. Ctrl+C para salir.")
     try:
         sensor_loop()
     except KeyboardInterrupt:
-        print("\n\nInterrumpido por el usuario.")
+        log("Interrumpido por el usuario.")
     except Exception as e:
-        print(f"\n\nError inesperado: {e}")
+        log(f"Error inesperado: {e}")
     finally:
         shutdown()
         print(f"Final -> Ingresos: {state['entry_counter']} | Salidas: {state['exit_counter']} | Total: {int(state['entry_counter'])+int(state['exit_counter'])}")
