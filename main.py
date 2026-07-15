@@ -172,4 +172,4 @@ if __name__ == "__main__":
         print(f"\n\nError inesperado: {e}")
     finally:
         shutdown()
-        print(f"Final -> Ingresos: {state['entry_counter']} | Salidas: {state['exit_counter']}")
+        print(f"Final -> Ingresos: {state['entry_counter']} | Salidas: {state['exit_counter']} | Total: {int(state['entry_counter'])+int(state['exit_counter'])}")
