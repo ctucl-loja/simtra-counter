@@ -63,7 +63,8 @@ source /home/admin/env/bin/activate
 ### 3. Instalar dependencias
 
 ```bash
-pip install flask gpiozero
+pip install -r requirements.txt
+cp .env.example .env   # editar SIMTRA_BACKEND_URL con la IP de la Raspberry de simtra-bus-manager
 ```
 
 > En PC/Mac (sin GPIO) la aplicación Flask arranca automáticamente en **modo simulación**; no se requiere hardware adicional. El modo `main.py` sí requiere hardware real (sensores y buzzer).
