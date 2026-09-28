@@ -2,6 +2,7 @@ import os
 import queue
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from time import sleep, time
@@ -130,69 +131,122 @@ def buzzer_is_active() -> bool:
 
 # ── Cola local + envío al backend ─────────────────────────────────────────────
 # El loop de sensores solo encola el evento en memoria (no bloquea). Un único
-# hilo de sincronización es dueño de la conexión SQLite: intenta el POST y, si
-# falla, deja el evento guardado con uploaded=0 para reintentarlo luego.
+# hilo de sincronización es dueño de la conexión SQLite: guarda el evento,
+# intenta el POST y, si falla, lo deja con uploaded=0 para reintentarlo luego.
+#
+# Cada cruce lleva un event_id (UUID) y el timestamp del cruce, generados UNA
+# vez al detectarlo y guardados en SQLite: todos los reintentos envían los
+# mismos valores. simtra-bus-manager deduplica por event_id (un reintento de un
+# evento que ya guardó responde 2xx con el registro existente) y usa el
+# timestamp para ubicar el cruce en su GPS histórico.
 _new_events: queue.Queue = queue.Queue()
 _sync_stop = threading.Event()
 _sync_wake = threading.Event()
 _sync_thread: threading.Thread | None = None
 
+# Columnas agregadas después de la primera versión de la tabla. SQLite solo
+# admite ADD COLUMN; las filas viejas se completan en migrate_local_db.
+_ADDED_COLUMNS = {
+    "event_id": "TEXT",
+    "timestamp": "TEXT",
+    "rejected": "INTEGER NOT NULL DEFAULT 0",
+}
 
-def open_local_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(LOCAL_DB_PATH)
+
+def migrate_local_db(conn: sqlite3.Connection) -> None:
+    """Agrega columnas faltantes a una base vieja sin borrar datos."""
+    present = {row[1] for row in conn.execute("PRAGMA table_info(passenger_events)")}
+    for name, definition in _ADDED_COLUMNS.items():
+        if name not in present:
+            conn.execute(f"ALTER TABLE passenger_events ADD COLUMN {name} {definition}")
+            log(f"[LOCAL] Migración: columna passenger_events.{name} agregada")
+
+    # Filas anteriores a la migración: created_at ya era la hora del cruce.
+    conn.execute("UPDATE passenger_events SET timestamp = created_at WHERE timestamp IS NULL")
+    for (row_id,) in conn.execute(
+            "SELECT id FROM passenger_events WHERE event_id IS NULL").fetchall():
+        conn.execute("UPDATE passenger_events SET event_id = ? WHERE id = ?",
+                     (str(uuid.uuid4()), row_id))
+
+    conn.execute("DROP INDEX IF EXISTS idx_passenger_events_pending")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_passenger_events_event_id "
+        "ON passenger_events (event_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_passenger_events_queue "
+        "ON passenger_events (uploaded, rejected, id)"
+    )
+    conn.commit()
+
+
+def open_local_db(path: Path | None = None) -> sqlite3.Connection:
+    conn = sqlite3.connect(path or LOCAL_DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS passenger_events (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id    TEXT,
+            timestamp   TEXT,
             direction   TEXT    NOT NULL,
             door        TEXT    NOT NULL,
             created_at  TEXT    NOT NULL,
             uploaded    INTEGER NOT NULL DEFAULT 0,
             uploaded_at TEXT,
             attempts    INTEGER NOT NULL DEFAULT 0,
-            last_error  TEXT
+            last_error  TEXT,
+            rejected    INTEGER NOT NULL DEFAULT 0
         )
         """
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_passenger_events_pending "
-        "ON passenger_events (uploaded, id)"
-    )
-    conn.commit()
+    migrate_local_db(conn)
     return conn
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def post_passenger(direction: str, door: str) -> str | None:
-    """Hace el POST. Devuelve None si fue exitoso, o el motivo del fallo."""
+# Resultados de un intento de envío
+SEND_OK = "ok"                # 2xx: guardado (o ya existía con ese event_id)
+SEND_CONFLICT = "conflict"    # 409: event_id ya usado con otros datos; no se reintenta
+SEND_HTTP_ERROR = "http"      # otro código HTTP: se reintenta más tarde
+SEND_NETWORK_ERROR = "net"    # timeout / red / backend caído: se reintenta más tarde
+
+
+def passenger_payload(event_id: str, timestamp: str, direction: str, door: str) -> dict:
+    """Cuerpo de PassengerCreate (simtra-bus-manager). Sin latitude/longitude:
+    la ubicación la decide siempre el backend."""
+    return {"event_id": event_id, "timestamp": timestamp, "direction": direction, "door": door}
+
+
+def post_passenger(payload: dict) -> tuple[str, str | None]:
+    """Hace el POST. Devuelve (resultado, motivo del fallo o None)."""
     try:
-        resp = requests.post(
-            API_URL,
-            json={"direction": direction, "door": door},  # payload de PassengerCreate
-            timeout=HTTP_TIMEOUT,
-        )
+        resp = requests.post(API_URL, json=payload, timeout=HTTP_TIMEOUT)
     except requests.RequestException as e:
-        return f"{type(e).__name__}: {e}"
-    if not resp.ok:
-        return f"HTTP {resp.status_code}: {resp.text[:200]}"
-    return None
+        return SEND_NETWORK_ERROR, f"{type(e).__name__}: {e}"
+    if resp.ok:
+        return SEND_OK, None
+    error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+    if resp.status_code == 409:
+        return SEND_CONFLICT, error
+    return SEND_HTTP_ERROR, error
 
 
-def _mark_attempt(conn: sqlite3.Connection, event_id: int, error: str | None) -> None:
-    if error is None:
+def _mark_attempt(conn: sqlite3.Connection, row_id: int, result: str, error: str | None) -> None:
+    if result == SEND_OK:
         conn.execute(
             "UPDATE passenger_events SET uploaded = 1, uploaded_at = ?, "
             "attempts = attempts + 1, last_error = NULL WHERE id = ?",
-            (_now_iso(), event_id),
+            (_now_iso(), row_id),
         )
     else:
         conn.execute(
-            "UPDATE passenger_events SET attempts = attempts + 1, last_error = ? WHERE id = ?",
-            (error, event_id),
+            "UPDATE passenger_events SET attempts = attempts + 1, last_error = ?, "
+            "rejected = ? WHERE id = ?",
+            (error, int(result == SEND_CONFLICT), row_id),
         )
     conn.commit()
 
@@ -202,49 +256,62 @@ def _store_new_events(conn: sqlite3.Connection) -> list[int]:
     ids = []
     while True:
         try:
-            direction, door, created_at = _new_events.get_nowait()
+            event_id, timestamp, direction, door = _new_events.get_nowait()
         except queue.Empty:
             return ids
         cur = conn.execute(
-            "INSERT INTO passenger_events (direction, door, created_at) VALUES (?, ?, ?)",
-            (direction, door, created_at),
+            "INSERT INTO passenger_events (event_id, timestamp, direction, door, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (event_id, timestamp, direction, door, _now_iso()),
         )
         conn.commit()
         ids.append(cur.lastrowid)
 
 
 def sync_pending(conn: sqlite3.Connection, new_ids: list[int]) -> None:
-    """Sube en orden (más antiguo primero) todos los eventos con uploaded=0."""
+    """Sube en orden (más antiguo primero) los eventos con uploaded=0 no rechazados."""
     pending = conn.execute(
-        "SELECT id, direction, door FROM passenger_events WHERE uploaded = 0 ORDER BY id"
+        "SELECT id, event_id, timestamp, direction, door FROM passenger_events "
+        "WHERE uploaded = 0 AND rejected = 0 ORDER BY id"
     ).fetchall()
 
-    for event_id, direction, door in pending:
+    for row_id, event_id, timestamp, direction, door in pending:
         if _sync_stop.is_set():
             return
-        is_new = event_id in new_ids
+        is_new = row_id in new_ids
+        label = f"#{row_id} ({direction}, {event_id}, {timestamp})"
         if not is_new:
-            log(f"[SYNC] Reintentando evento pendiente #{event_id} ({direction})")
+            log(f"[SYNC] Reintentando evento pendiente {label}")
 
-        error = post_passenger(direction, door)
-        _mark_attempt(conn, event_id, error)
+        result, error = post_passenger(passenger_payload(event_id, timestamp, direction, door))
+        _mark_attempt(conn, row_id, result, error)
 
-        if error is None:
+        if result == SEND_OK:
             if is_new:
-                log(f"[HTTP OK] Evento #{event_id} ({direction}) enviado al backend")
+                log(f"[HTTP OK] Evento {label} enviado al backend")
             else:
-                log(f"[SYNC] Evento pendiente #{event_id} ({direction}) -> uploaded=true")
+                log(f"[SYNC] Evento pendiente {label} -> uploaded=true")
             continue
 
-        log(f"[HTTP ERROR] Evento #{event_id} ({direction}) no enviado: {error}")
+        if result == SEND_CONFLICT:
+            # El backend ya tiene ese event_id con otros datos. Reintentar no
+            # lo arregla: queda en la base local marcado rejected=1 para
+            # revisión manual, y la cola sigue con los demás.
+            log(f"[HTTP 409] Evento {label} rechazado: el event_id ya existe en el "
+                f"backend con datos distintos. No se reintenta. {error}")
+            continue
+
+        log(f"[HTTP ERROR] Evento {label} no enviado: {error}")
         if is_new:
-            log(f"[LOCAL] Evento #{event_id} guardado localmente como pendiente (uploaded=false)")
-        # Otros eventos nuevos de esta tanda también quedan guardados como pendientes
-        for other_id in new_ids:
-            if other_id > event_id:
-                log(f"[LOCAL] Evento #{other_id} guardado localmente como pendiente (uploaded=false)")
+            log(f"[LOCAL] Evento #{row_id} guardado localmente como pendiente (uploaded=false)")
+        if result == SEND_HTTP_ERROR:
+            continue   # el backend responde: se prueba con el siguiente
+
         # Backend caído o inalcanzable: se corta la tanda y se reintenta en el
         # próximo ciclo, para no pagar un timeout por cada evento pendiente.
+        for other_id in new_ids:
+            if other_id > row_id:
+                log(f"[LOCAL] Evento #{other_id} guardado localmente como pendiente (uploaded=false)")
         return
 
 
@@ -256,7 +323,7 @@ def sync_loop() -> None:
         return
 
     pending_count = conn.execute(
-        "SELECT COUNT(*) FROM passenger_events WHERE uploaded = 0"
+        "SELECT COUNT(*) FROM passenger_events WHERE uploaded = 0 AND rejected = 0"
     ).fetchone()[0]
     log(f"[SYNC] Base local {LOCAL_DB_PATH} ({pending_count} eventos pendientes). Backend: {API_URL}")
 
@@ -276,8 +343,8 @@ def sync_loop() -> None:
     finally:
         # Al apagar, lo que quedó en memoria se persiste sin intentar enviarlo
         try:
-            for event_id in _store_new_events(conn):
-                log(f"[LOCAL] Evento #{event_id} guardado localmente como pendiente (uploaded=false)")
+            for row_id in _store_new_events(conn):
+                log(f"[LOCAL] Evento #{row_id} guardado localmente como pendiente (uploaded=false)")
         finally:
             conn.close()
 
@@ -296,8 +363,9 @@ def stop_sync_thread() -> None:
 
 
 def send_passenger_event(direction: str) -> None:
-    """Encola el evento para el hilo de sincronización (no bloquea el loop)."""
-    _new_events.put((direction, DOOR, _now_iso()))
+    """Registra el cruce (event_id + hora del cruce) y lo encola para el hilo
+    de sincronización. No bloquea el loop de sensores."""
+    _new_events.put((str(uuid.uuid4()), _now_iso(), direction, DOOR))
     _sync_wake.set()
 
 
